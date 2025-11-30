@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+
+set -e
+set -o pipefail
+
+ASDF_INSTALL_TYPE=${ASDF_INSTALL_TYPE:-version}
+ASDF_INSTALL_VERSION=${ASDF_INSTALL_VERSION:-latest}
+ASDF_INSTALL_PATH=${ASDF_INSTALL_PATH:-}
+
+if [ -z "$ASDF_INSTALL_VERSION" ] || [ -z "$ASDF_INSTALL_PATH" ]; then
+    echo "Error: ASDF_INSTALL_VERSION or ASDF_INSTALL_PATH is empty"
+    exit 1
+fi
+
+# Function to check if a command exists
+check_command() {
+    if ! command -v "$1" &> /dev/null; then
+        echo "Error: $1 is required but not installed."
+        exit 1
+    fi
+}
+
+echo "Checking dependencies..."
+check_command make
+check_command curl
+check_command tar
+check_command cmake
+
+# Check for compiler
+if command -v gcc &> /dev/null; then
+    COMPILER="gcc"
+elif command -v clang &> /dev/null; then
+    COMPILER="clang"
+else
+    echo "Error: No C++ compiler found (gcc or clang required)."
+    exit 1
+fi
+
+echo "Installing whisper.cpp version $ASDF_INSTALL_VERSION..."
+
+# Create temp dir for source download and build
+BUILD_DIR=$(mktemp -d)
+trap 'rm -rf "$BUILD_DIR"' EXIT
+
+cd "$BUILD_DIR"
+
+# Download source
+URL="https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v${ASDF_INSTALL_VERSION}.tar.gz"
+echo "Downloading source from $URL..."
+curl -sL "$URL" -o source.tar.gz
+
+# Extract
+tar -xzf source.tar.gz --strip-components=1
+
+# Build
+echo "Building whisper.cpp..."
+
+# Allow users to pass custom CMake flags via WHISPER_CPP_CMAKE_FLAGS
+CMAKE_FLAGS=${WHISPER_CPP_CMAKE_FLAGS:-}
+
+# We build in a 'build' subdirectory
+mkdir -p build
+cd build
+
+# Default options: Build examples and server
+DEFAULT_CMAKE_FLAGS="-DWHISPER_BUILD_EXAMPLES=ON -DWHISPER_BUILD_SERVER=ON"
+
+# Standard CMake build
+# Binaries will be placed in build/bin/ (relative to build root, so inside build/bin/)
+cmake .. -DCMAKE_BUILD_TYPE=Release $DEFAULT_CMAKE_FLAGS $CMAKE_FLAGS
+
+# Compile
+make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
+
+# Install
+echo "Installing binaries..."
+mkdir -p "$ASDF_INSTALL_PATH/bin"
+
+# The build artifacts are in bin/ inside the build directory
+# We want to copy specific tools to the installation path
+
+# Helper function to copy and rename if needed
+# Usage: copy_bin <source_name> <dest_name>
+copy_bin() {
+    local src=$1
+    local dest=$2
+    
+    # Look in bin/
+    if [ -f "bin/$src" ]; then
+        cp "bin/$src" "$ASDF_INSTALL_PATH/bin/$dest"
+        echo "Installed $dest"
+        return 0
+    # Also check for prefixed version in bin/ (e.g. whisper-stream instead of stream)
+    elif [ -f "bin/whisper-$src" ]; then
+        cp "bin/whisper-$src" "$ASDF_INSTALL_PATH/bin/$dest"
+        echo "Installed $dest (found as whisper-$src)"
+        return 0
+    else
+        return 1
+    fi
+}
+
+# 1. Main CLI (whisper-cli)
+if ! copy_bin "whisper-cli" "whisper-cli"; then
+    if ! copy_bin "main" "whisper-cli"; then
+        echo "Error: Could not find main executable (whisper-cli or main)"
+        exit 1
+    fi
+fi
+
+# 2. Other tools
+TOOLS=(
+    "quantize:whisper-quantize"
+    "stream:whisper-stream"
+    "talk:whisper-talk"
+    "talk-llama:whisper-talk-llama"
+    "server:whisper-server"
+    "bench:whisper-bench"
+    "command:whisper-command"
+)
+
+for tool_map in "${TOOLS[@]}"; do
+    src="${tool_map%%:*}"
+    dest="${tool_map#*:}"
+    
+    if ! copy_bin "$src" "$dest"; then
+        echo "Warning: Tool $src not found in build/bin/, skipping."
+    fi
+done
+
+# 3. Model Downloader script (from source root, not build dir)
+cd .. # Back to source root
+if [ -f "models/download-ggml-model.sh" ]; then
+    cp "models/download-ggml-model.sh" "$ASDF_INSTALL_PATH/bin/whisper-download-model"
+    chmod +x "$ASDF_INSTALL_PATH/bin/whisper-download-model"
+    echo "Installed whisper-download-model"
+else
+    echo "Warning: Model download script not found."
+fi
+
+echo "Installation of whisper.cpp $ASDF_INSTALL_VERSION successful!"

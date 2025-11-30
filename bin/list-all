@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# Sort versions:
+# 1. Replace - with . (handle pre-releases/candidates if necessary, though simple sorting often suffices for semver)
+# 2. Sort using sort -V (version sort) if available, or fallback.
+# Note: This simplistic sort might need adjustment for complex pre-release tags.
+sort_versions() {
+	git_versions="$1"
+    
+    if [ "$(uname)" = "Linux" ]; then
+        echo "$git_versions" | tr ' ' '\n' | sort -V
+    else
+        # macOS sort often lacks -V or behaves differently, but usually handles dotted versions well enough
+        # or we can try to be clever. For now, basic sort.
+        echo "$git_versions" | tr ' ' '\n' | sort -V 2>/dev/null || echo "$git_versions" | tr ' ' '\n' | sort -n
+    fi
+}
+
+# Fetch tags from upstream
+# Filter for tags starting with 'v' followed by a digit
+versions=$(git ls-remote --tags --refs https://github.com/ggml-org/whisper.cpp.git | \
+    awk -F/ '{print $3}' | \
+    grep -E '^v[0-9]+' | \
+    sed 's/^v//')
+
+# Output sorted versions
+sort_versions "$versions"
