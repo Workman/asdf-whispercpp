@@ -18,14 +18,14 @@ Since this plugin builds from source, you need a working C++ compiler and build 
 ### using asdf
 
 ```bash
-asdf plugin add whispercpp https://github.com/workmangeneral/asdf-whispercpp.git
+asdf plugin add whispercpp https://github.com/workman/asdf-whispercpp.git
 asdf install whispercpp latest
 ```
 
 ### using mise
 
 ```bash
-mise plugin install whispercpp https://github.com/workmangeneral/asdf-whispercpp.git
+mise plugin install whispercpp https://github.com/workman/asdf-whispercpp.git
 mise install whispercpp@latest
 ```
 
